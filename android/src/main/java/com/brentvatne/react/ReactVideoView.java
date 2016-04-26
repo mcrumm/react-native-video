@@ -1,8 +1,12 @@
 package com.brentvatne.react;
 
+import android.app.Activity;
 import android.media.MediaPlayer;
 import android.os.Handler;
+import android.view.MotionEvent;
+import android.view.View;
 import android.util.Log;
+import android.widget.MediaController;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.uimanager.ThemedReactContext;
@@ -11,7 +15,8 @@ import com.yqritc.scalablevideoview.ScalableType;
 import com.yqritc.scalablevideoview.ScalableVideoView;
 
 public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnPreparedListener, MediaPlayer
-        .OnErrorListener, MediaPlayer.OnBufferingUpdateListener, MediaPlayer.OnCompletionListener {
+        .OnErrorListener, MediaPlayer.OnBufferingUpdateListener, MediaPlayer.OnCompletionListener, MediaController
+        .MediaPlayerControl {
 
     public enum Events {
         EVENT_LOAD_START("onVideoLoadStart"),
@@ -66,9 +71,12 @@ public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnP
     private float mVolume = 1.0f;
     private float mRate = 1.0f;
 
+    private MediaController mMediaController = null;
+    private boolean mControls = false; // True if mMediaController is enabled.
     private boolean mMediaPlayerValid = false; // True if mMediaPlayer is in prepared, started, or paused state.
     private int mVideoDuration = 0;
     private int mVideoBufferedDuration = 0;
+    private int mVideoBufferedPercentage = 0;
 
     public ReactVideoView(ThemedReactContext themedReactContext) {
         super(themedReactContext);
@@ -117,6 +125,9 @@ public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnP
         mMediaPlayerValid = false;
         mVideoDuration = 0;
         mVideoBufferedDuration = 0;
+        mVideoBufferedPercentage = 0;
+
+        removeMediaController();
 
         initializeMediaPlayerIfNeeded();
         mMediaPlayer.reset();
@@ -145,6 +156,35 @@ public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnP
         mEventEmitter.receiveEvent(getId(), Events.EVENT_LOAD_START.toString(), event);
 
         prepareAsync(this);
+    }
+
+    public void setControlsModifier(final boolean controls) {
+        mControls = controls;
+
+        if (!mMediaPlayerValid) {
+          return;
+        }
+
+        if (controls) {
+          setMediaController(new MediaController(mThemedReactContext));
+        } else {
+          removeMediaController();
+        }
+    }
+
+    private void setMediaController(MediaController controller) {
+      hideMediaController();
+      mMediaController = controller;
+      attachMediaController();
+    }
+
+    private void attachMediaController() {
+        if (mMediaPlayer != null && mMediaController != null) {
+            mMediaController.setMediaPlayer(this);
+            mMediaController.setAnchorView(this);
+            mMediaController.setEnabled(true);
+            mMediaController.show(0);
+        }
     }
 
     public void setResizeModeModifier(final ScalableType resizeMode) {
@@ -215,6 +255,7 @@ public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnP
         setRepeatModifier(mRepeat);
         setPausedModifier(mPaused);
         setMutedModifier(mMuted);
+        setControlsModifier(mControls);
 //        setRateModifier(mRate);
     }
 
@@ -252,7 +293,14 @@ public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnP
 
     @Override
     public void onBufferingUpdate(MediaPlayer mp, int percent) {
+        mVideoBufferedPercentage = percent;
         mVideoBufferedDuration = (int) Math.round((double) (mVideoDuration * percent) / 100.0);
+    }
+
+    @Override
+    public void pause() {
+        mMediaPlayer.pause();
+        showMediaController(0);
     }
 
     @Override
@@ -271,6 +319,7 @@ public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnP
     @Override
     public void onCompletion(MediaPlayer mp) {
         mMediaPlayerValid = false;
+        hideMediaController();
         mEventEmitter.receiveEvent(getId(), Events.EVENT_END.toString(), null);
     }
 
@@ -284,5 +333,77 @@ public class ReactVideoView extends ScalableVideoView implements MediaPlayer.OnP
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         setSrc(mSrcUriString, mSrcType, mSrcIsNetwork, mSrcIsAsset);
+    }
+
+    public void reset() {
+      mMediaPlayer.reset();
+    }
+
+    public void release() {
+        reset();
+        removeMediaController();
+        mMediaPlayer.release();
+        mMediaPlayer = null;
+    }
+
+    private void hideMediaController() {
+      if (mMediaController != null) {
+        mMediaController.hide();
+      }
+    }
+
+    private void showMediaController(final int timeout) {
+      if (mMediaController != null) {
+        mMediaController.show(timeout);
+      }
+    }
+
+    private void removeMediaController() {
+      hideMediaController();
+      mMediaController = null;
+    }
+
+    public int getAudioSessionId() {
+        if (mMediaPlayerValid) {
+            mMediaPlayer.getAudioSessionId();
+        }
+        return 0;
+    }
+
+    public int getBufferPercentage() {
+        if (mMediaPlayerValid) {
+            return mVideoBufferedPercentage;
+        }
+        return 0;
+    }
+
+    public boolean canPause() {
+        return true;
+    }
+
+    public boolean canSeekBackward() {
+        return true;
+    }
+
+    public boolean canSeekForward() {
+        return true;
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                showMediaController(0);
+                break;
+            case MotionEvent.ACTION_UP:
+                showMediaController(3000); // start timeout
+                break;
+            case MotionEvent.ACTION_CANCEL:
+                hideMediaController();
+                break;
+            default:
+                break;
+        }
+        return true;
     }
 }
